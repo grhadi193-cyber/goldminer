@@ -19,6 +19,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # UNVERIFIED third party and warned about on every run (R2).
 OFFICIAL_JEV_HOST = "api.typesafe.ai"
 
+# Documented Jev hosts. Each preset is (base_url, model, host). JEV_PROVIDER picks a preset;
+# anything the operator sets explicitly (JEV_BASE_URL / JEV_MODEL / JEV_ALLOWED_HOSTS) WINS over
+# the preset. Nothing here is a secret, and every call still goes through the host allowlist.
+#
+#   typesafe  https://docs.typesafe.ai          — official API, model `jev-latest`
+#   opencode  https://opencode.ai/v2/docs/console/models — OpenCode Console/Zen serves Jev;
+#             `jev-1.13-free` is the limited-time FREE model, `jev-1.13` the paid one. Both use
+#             https://opencode.ai/inference (v2) — the older /zen path still appears in the docs.
+JEV_PROVIDER_PRESETS: dict[str, tuple[str, str, str]] = {
+    "typesafe": ("https://api.typesafe.ai", "jev-latest", OFFICIAL_JEV_HOST),
+    "opencode": ("https://opencode.ai/inference", "jev-1.13-free", "opencode.ai"),
+    "opencode-paid": ("https://opencode.ai/inference", "jev-1.13", "opencode.ai"),
+    "opencode-zen": ("https://opencode.ai/zen", "jev-1.13-free", "opencode.ai"),
+}
+JEV_PROVIDER_HOSTS = {"opencode": "opencode.ai", "opencode-paid": "opencode.ai", "opencode-zen": "opencode.ai"}
+
 _WEEKDAY_NAMES = {
     "mon": 0, "monday": 0,
     "tue": 1, "tuesday": 1,
@@ -54,11 +70,12 @@ class Settings(BaseSettings):
     telegram_session: str = ""
     telegram_channels: str = ""
 
-    # jev
-    jev_base_url: str = "https://api.typesafe.ai"
+    # jev — empty means "take it from JEV_PROVIDER" (see JEV_PROVIDER_PRESETS)
+    jev_provider: str = ""
+    jev_base_url: str = ""
     jev_api_key: str = ""
-    jev_allowed_hosts: str = OFFICIAL_JEV_HOST
-    jev_model: str = "jev-latest"
+    jev_allowed_hosts: str = ""
+    jev_model: str = ""
     jev_timeout_s: float = 20.0
     jev_max_concurrency: int = 3
 
@@ -126,18 +143,61 @@ class Settings(BaseSettings):
         return self.database_url_direct or self.db_url
 
     @property
+    def jev_provider_resolved(self) -> str:
+        """Explicit JEV_PROVIDER, else inferred from the configured host, else typesafe."""
+        if self.jev_provider:
+            name = self.jev_provider.strip().lower()
+            if name not in JEV_PROVIDER_PRESETS:
+                raise ConfigError(
+                    f"JEV_PROVIDER={self.jev_provider!r} is unknown; use one of "
+                    f"{', '.join(sorted(JEV_PROVIDER_PRESETS))} or leave it empty with an explicit JEV_BASE_URL"
+                )
+            return name
+        host = (urlparse(self.jev_base_url).hostname or "").lower() if self.jev_base_url else ""
+        if host == OFFICIAL_JEV_HOST:
+            return "typesafe"
+        if host == "opencode.ai":
+            return "opencode"
+        return "typesafe" if not self.jev_base_url else "custom"
+
+    @property
+    def jev_base_url_resolved(self) -> str:
+        if self.jev_base_url:
+            return self.jev_base_url.rstrip("/")
+        preset = JEV_PROVIDER_PRESETS.get(self.jev_provider_resolved)
+        return (preset[0] if preset else JEV_PROVIDER_PRESETS["typesafe"][0]).rstrip("/")
+
+    @property
+    def jev_model_resolved(self) -> str:
+        if self.jev_model:
+            return self.jev_model
+        preset = JEV_PROVIDER_PRESETS.get(self.jev_provider_resolved)
+        return preset[1] if preset else JEV_PROVIDER_PRESETS["typesafe"][1]
+
+    @property
     def allowed_jev_hosts(self) -> list[str]:
-        return [h.lower() for h in _csv(self.jev_allowed_hosts)]
+        """Explicit JEV_ALLOWED_HOSTS, else the configured provider's host."""
+        explicit = [h.lower() for h in _csv(self.jev_allowed_hosts)]
+        if explicit:
+            return explicit
+        host = (urlparse(self.jev_base_url_resolved).hostname or "").lower()
+        return [host] if host else [OFFICIAL_JEV_HOST]
 
     @property
     def jev_host(self) -> str:
-        return (urlparse(self.jev_base_url).hostname or "").lower()
+        return (urlparse(self.jev_base_url_resolved).hostname or "").lower()
 
     @property
     def jev_endpoint(self) -> str:
-        """Full /v1/systemone endpoint, tolerant of operators pasting it into JEV_BASE_URL."""
-        base = self.jev_base_url.rstrip("/")
-        if base.endswith("/v1/systemone"):
+        """Full /systemone endpoint, tolerant of operators pasting a full path into JEV_BASE_URL.
+
+        Handles the three shapes the documented providers use:
+          https://api.typesafe.ai         -> /v1/systemone
+          https://opencode.ai/inference   -> /inference/v1/systemone
+          https://x/some/v1/systemone     -> used verbatim
+        """
+        base = self.jev_base_url_resolved
+        if base.endswith("/systemone"):
             return base
         if base.endswith("/v1"):
             return f"{base}/systemone"
@@ -152,7 +212,7 @@ class Settings(BaseSettings):
         if self.jev_is_official_host:
             return None
         return (
-            f"JEV_BASE_URL points at {self.jev_host!r}, which is NOT the TypeSafe-documented "
+            f"JEV provider {self.jev_provider_resolved!r}: calls go to {self.jev_host!r}, which is NOT the TypeSafe-documented "
             f"host ({OFFICIAL_JEV_HOST}). Treat it as an UNVERIFIED THIRD PARTY: it may log, "
             "store, or reuse everything you send, including market signals and research "
             "state. You are responsible for verifying who operates that host and its "
@@ -250,4 +310,12 @@ def demo_mode() -> bool:
     return os.environ.get("GM_DEMO_MODE", "0") not in ("0", "", "false", "False")
 
 
-__all__ = ["Settings", "get_settings", "reset_settings_cache", "demo_mode", "OFFICIAL_JEV_HOST", "Field"]
+__all__ = [
+    "Settings",
+    "get_settings",
+    "reset_settings_cache",
+    "demo_mode",
+    "OFFICIAL_JEV_HOST",
+    "JEV_PROVIDER_PRESETS",
+    "Field",
+]

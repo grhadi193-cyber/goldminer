@@ -10,18 +10,27 @@ handler — that is the whole point of the architecture (rule R1: code does ALL 
 
 ## Run it
 
-```bash
-# from the repository root — generate the bundle the UI reads
-.venv/bin/python -m worker ui export --split discovery --days 45 --clean
+**The panel reads everything from the worker API**, gated by the panel password
+(`/api/bundle/*`), so there is no bundle file to keep in sync and no second source of truth.
 
-cd ui
-npm install
-npm run dev            # http://localhost:3000  (binds 0.0.0.0)
+```bash
+# 1. the worker (this is where the data and the settings live)
+.venv/bin/python -m worker server run          # http://0.0.0.0:8787
+
+# 2. the UI in development (proxies /api/* to the worker, per next.config.mjs)
+cd ui && npm install && npm run dev            # http://localhost:3000  (binds 0.0.0.0)
+
+# 3. the production shape: a static export that the WORKER serves at / (see Dockerfile)
+npm run build                                  # -> ui/out, served by `worker server run`
 ```
 
-`npm run build && npm start` for a production build, `npm run typecheck` for `tsc --noEmit`.
+`npm run typecheck` runs `tsc --noEmit`. `npm start` only serves `out/` over plain HTTP — useful for
+looking at layout, useless for data, because the API must be on the same origin.
 
-## Data contract (`public/data`, generated, git-ignored)
+`ui export` still exists and writes the same members to `ui/public/data` (git-ignored) for offline
+inspection of the bundle or a Vercel-style reader deployment.
+
+## Data contract (`/api/bundle/<member>`, served by the worker)
 
 | file | contents |
 |---|---|
@@ -36,8 +45,10 @@ npm run dev            # http://localhost:3000  (binds 0.0.0.0)
 | `hypotheses.json` | the hypothesis registry and each coded verdict |
 | `run_config.json` | runtime settings (no secrets) + the frozen `run_config` rows |
 
-Regeneration is idempotent: `ui export` rewrites the directory from the database, and `--clean`
-wipes it first. Nothing in the UI writes back except the token-gated admin route.
+Every member is built on demand from the database (30 s in-process cache, `MISHKAH_BUNDLE_TTL`);
+`python -m worker ui export` writes the identical members to `ui/public/data` for offline use. The
+browser never writes data: panel writes go to `/api/admin/*`, which the worker validates, applies and
+audits (it is the only process that touches Postgres).
 
 ## Anti-leakage guarantees the UI leans on
 
@@ -49,28 +60,31 @@ wipes it first. Nothing in the UI writes back except the token-gated admin route
 - Marker minute offsets are computed in Python with `zoneinfo` (Iran has DST); the browser never
   does timezone arithmetic.
 
-## Deployment notes (Vercel)
+## Deployment notes (Render — see `docs/deploy_render.md`)
 
-The app is a static-renderable Next 14 App Router project: pages read the bundle with `fs`, routes
-are `force-dynamic` where a fresh read matters. On Vercel:
+`next.config.mjs` sets `output: "export"`: the app is a static bundle with no server at runtime, and
+the **worker serves it** (`ui/out`) on the same origin as `/api/*`. That is what makes the panel
+work on a single free Render web service:
 
-- put the bundle in the deployment (or mount it from object storage) — the UI has no database
-  driver and never will: `WORKER_ADMIN_URL` is the only bridge back to the worker.
-- `UI_ADMIN_TOKEN` (env, server-side) gates `/api/admin`. Without it the route answers 503; with it
-  but without `WORKER_ADMIN_URL` it answers 501 and tells the operator to run the change on the
-  worker host, where the audit log lives.
-- no cron, no long-running function: the worker does the long work and writes the bundle.
+- no database driver, no `server-only` reads, no CORS, no proxy hop;
+- the password gate is enforced by the worker (`/api/auth/*` + session cookie) — the UI only decides
+  what to show;
+- no cron and no long-running function: scheduling is the signed `/webhook`, and the worker does the
+  long work.
+- `MISHKAH_WORKER_URL` only matters in development (where `next dev` proxies `/api/*` to it).
 
 ## Files
 
 ```
-app/page.tsx              server component: load the bundle, hand it to the shell
-app/api/admin/route.ts    token-gated change requests (never writes to Postgres itself)
+app/page.tsx              client page: gate → bundle fetch + polling → shell
+components/AuthGate.tsx   first-run password setup / login (worker-issued session cookie)
+components/AdminView.tsx  settings groups, per-group tests, run_config writes, session controls
 components/MissionControl.tsx  shell: rail + header + banner + view switch + provenance footer
 components/Rail.tsx       the left icon rail (8 views)
 components/LiveView.tsx|TimelineView|LeaderboardView|DecisionView|BacktestView|CoverageView|HypothesesView|AdminView.tsx
 components/Bits.tsx       Panel/Chip/Stat/CiBar/Ring/StackedBar/LineChart/KeyValue primitives
 lib/types.ts              bundle types — keep in sync with worker/worker/cli/ui_cmd.py
-lib/data.ts               server-only bundle loaders
+lib/api.ts                browser → worker API (auth, settings, bundle) — no secrets, no math
+lib/data.ts               bundle loaders (client-side, same origin, session cookie included)
 lib/format.ts             every number/label/digit conversion in the app
 ```

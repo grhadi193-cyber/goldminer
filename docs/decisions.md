@@ -173,3 +173,74 @@ depend on an API key being present.
 **Consequences.** No hypotheses are proposed automatically yet; `hypotheses` stays empty until the
 operator either enables the explainer or inserts rows by hand (the coded tests in
 `research/hypothesis.py` are what turn a proposal into a verdict, either way).
+
+## D15 · deployment topology supersedes D13: ONE Render web service serves the panel and the API
+**Decision (operator: "میبرم روی render.com و deploy میکنم").** The system ships as a single Docker
+image (`Dockerfile`) described by `render.yaml`: uvicorn serves the **static Next.js export**
+(`ui/out`) at `/`, the panel API at `/api/*`, the bundle at `/api/bundle/*` and the signed webhook at
+`/webhook`. Postgres stays external (Neon/Supabase free tier). The UI has no database driver, no
+server components that read the filesystem, and no `/data` folder of its own: the browser reads the
+bundle from the worker API, which rebuilds every member from the database (30 s in-process cache,
+invalidated by the webhook or any panel write).
+**Why.** D13 assumed Vercel could read a bundle file that the worker wrote somewhere. On Render that
+becomes a shared-filesystem problem (a container's disk is not the operator's disk, and a free
+instance's disk is ephemeral), and it would also mean either two services or a data pipeline that can
+silently go stale. Serving the API and the UI from one origin removes CORS, removes the proxy hop,
+and makes "what the panel shows" and "what the worker computed" the same request.
+**Consequences.** The `ui export` CLI stays — it is how the bundle is inspected offline and how the
+report is cross-checked — but nothing in the deployment depends on it any more (`MISHKAH_BUNDLE_DIR`
+points a container's export at `/tmp`, or a mounted disk). `WORKER_ADMIN_URL` and the token-gated
+Next `/api/admin` route are deleted; a panel write goes to the worker directly. Free-tier sleep is
+acceptable because the panel is a normal web page: opening it wakes the service, and the tiles
+honestly go amber while it was asleep. Vercel remains possible as a *reader* (the export is a static
+site) but is no longer the documented path; "no reliance on platform cron" still holds — scheduling
+is the signed webhook (D16).
+
+## D16 · panel access: one operator-set password → scrypt hash → session cookie
+**Decision.** The Mission Control is gated by a password the operator sets on first visit
+(`/api/auth/setup`, refused once a password exists anywhere) or bootstraps from `UI_ADMIN_PASSWORD`
+in the environment. The password is hashed with scrypt (`scrypt$N$r$p$salt$hash`) and stored in
+`app_secrets` under the name `UI_ADMIN_PASSWORD` — never in plaintext, never returned by any endpoint.
+Login issues an opaque 32-byte token; only its sha256 is stored (`ui_sessions`), and it travels in an
+HttpOnly, SameSite=Lax cookie (HTTP-only, so a `secure` flag is added automatically when the request
+is HTTPS). Eight failed logins in 15 minutes block further attempts per window, and every attempt is
+recorded. **Bundle reads require the session too** — the panel is the door, not a decoration.
+**Why.** The operator asked for it in so many words ("یکجایی بزاری که یک پسورد بزارم و وارد بشم"):
+the panel will be on the public internet and it is where API keys get typed. A single password with
+throttling is the honest amount of security for a one-operator research panel; per-user accounts
+would be pretending to an access-control story that does not exist.
+**Consequences.** Losing the password means a redeploy with `UI_ADMIN_PASSWORD` set (or
+`MISHKAH_MASTER_KEY` preserved and `app_secrets` edited) — the master key is what decrypts; the
+password only gates. Logging out on a shared machine still matters: changing the password does not
+revoke existing sessions (they expire on their own schedule, `UI_SESSION_MINUTES`, default 12 h).
+
+## D17 · settings precedence: panel > environment > package default; secrets write-only
+**Decision.** `settings_store.py` defines five groups / 21 fields (Jev, extraction+narrative,
+Telegram, price sources, panel). Resolution per field: a panel value if one is stored, else the
+process environment, else the package default — and clearing a panel value **falls back** instead of
+vanishing. Values are validated and coerced before they are stored (selects, booleans, numbers) so a
+typo is rejected in the panel rather than surfacing as a `ConfigError` inside a night run. Secrets are
+stored AES-256-GCM encrypted under `MISHKAH_MASTER_KEY` (env, or a local `.secrets/master.key`
+created 0600 on first use); the API returns a fingerprint (`sha256:…` + last four characters) and
+never the value; the browser can therefore never hold an API key, and a database dump alone reveals
+nothing usable.
+**Why.** The operator asked for panel-managed keys that are "easy and precise" without exposing
+secrets to the browser ("بتونم بقیه api ها رو هم ست کنم راحت و حرفهای و دقیق"), and R2 requires the Jev
+host allowlist to be enforced *before* anything leaves the process — which a stored `JEV_ALLOWED_HOSTS`
+must therefore obey too.
+**Consequences.** A panel value takes effect on the worker's next call (long-lived processes re-read
+`effective_settings(conn)`; the API does it per request), so no redeploy is needed to rotate a key.
+An unknown provider (panel or env) is a loud `ConfigError`, never a silent fallback. `MISHKAH_MASTER_KEY`
+must be backed up: it is deliberately not stored in the database, so stored keys are unrecoverable
+without it.
+
+## D18 · how the local UI gets its data: `/api/bundle/*`, same origin, session-gated
+**Decision.** The exported UI fetches every bundle member from `/api/bundle/<member>` (timeline days
+included) with `credentials: "include"`. `ui/public/data` remains a local artifact of `ui export`
+and is only used by `next dev` (whose config proxies `/api/*` to the worker on :8787 in development).
+**Why.** A static export cannot read the filesystem at request time; a build-time snapshot would go
+stale the moment the worker writes a row, and a second copy of the bundle is a second truth. One
+origin keeps the session cookie usable and the panel's gate meaningful.
+**Consequences.** If the browser is open while the worker sleeps (free tier), reads fail and the UI
+keeps the last good bundle on screen with its (now old) timestamp rather than inventing freshness.
+`MISHKAH_BUNDLE_TTL` controls the in-process cache; the webhook's `export` action invalidates it.

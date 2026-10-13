@@ -1,42 +1,46 @@
-import "server-only";
-import { promises as fs } from "node:fs";
-import path from "node:path";
+"use client";
+
 import type { Bundle, TimelineDay } from "./types";
-
-const DATA_DIR = path.join(process.cwd(), "public", "data");
-
-async function readJson<T>(name: string): Promise<T | null> {
-  try {
-    const raw = await fs.readFile(path.join(DATA_DIR, name), "utf8");
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
+import { fetchMember } from "./api";
 
 /**
- * The whole bundle is read at request time from `public/data`, which the worker regenerates with
- * `python -m worker ui export`. Nothing here computes a number — the UI only renders what the
- * worker already decided, so the browser can never disagree with a report.
+ * The UI is a STATIC export: there is no Next server at runtime, so the bundle is read by the
+ * browser from `/data/*.json`, which the worker serves (same origin as `/api/*`). That keeps the
+ * deployment to one service on Render and keeps the browser out of the decision path — the files
+ * are exactly the ones `python -m worker ui export` writes.
  */
+
 export async function loadBundle(): Promise<Bundle | null> {
-  const meta = await readJson<Bundle["meta"]>("meta.json");
+  const meta = await fetchMember<Bundle["meta"]>("meta.json");
   if (!meta) return null;
   const [live, leaderboard, decisions, timelineIndex, coverage, hypotheses, runConfig, backtest] =
     await Promise.all([
-      readJson<Bundle["live"]>("live.json"),
-      readJson<Bundle["leaderboard"]>("leaderboard.json"),
-      readJson<Bundle["decisions"]>("decisions.json"),
-      readJson<Bundle["timelineIndex"]>("timeline_index.json"),
-      readJson<Bundle["coverage"]>("coverage.json"),
-      readJson<Bundle["hypotheses"]>("hypotheses.json"),
-      readJson<Bundle["runConfig"]>("run_config.json"),
-      readJson<Bundle["backtest"]>("backtest.json"),
+      fetchMember<Bundle["live"]>("live.json"),
+      fetchMember<Bundle["leaderboard"]>("leaderboard.json"),
+      fetchMember<Bundle["decisions"]>("decisions.json"),
+      fetchMember<Bundle["timelineIndex"]>("timeline_index.json"),
+      fetchMember<Bundle["coverage"]>("coverage.json"),
+      fetchMember<Bundle["hypotheses"]>("hypotheses.json"),
+      fetchMember<Bundle["runConfig"]>("run_config.json"),
+      fetchMember<Bundle["backtest"]>("backtest.json"),
     ]);
   return {
     meta,
-    live: live ?? { as_of: meta.generated_at, stale_after_minutes: 3, mode: "paper", tiles: [], open_position: null, last_equity: null },
-    leaderboard: leaderboard ?? { asof_date: null, method_version: meta.method_version, family: null, cost_model: null, channels: [] },
+    live: live ?? {
+      as_of: meta.generated_at,
+      stale_after_minutes: 3,
+      mode: "paper",
+      tiles: [],
+      open_position: null,
+      last_equity: null,
+    },
+    leaderboard: leaderboard ?? {
+      asof_date: null,
+      method_version: meta.method_version,
+      family: null,
+      cost_model: null,
+      channels: [],
+    },
     decisions: decisions ?? { split: meta.split, items: [] },
     timelineIndex: timelineIndex ?? { days: [] },
     coverage: coverage ?? { rows: [], acceptance: [] },
@@ -46,7 +50,12 @@ export async function loadBundle(): Promise<Bundle | null> {
   };
 }
 
+/** Polled every 30s by the live tiles: the price tiles go amber after 3 minutes of silence. */
+export async function loadLive(): Promise<Bundle["live"] | null> {
+  return fetchMember<Bundle["live"]>("live.json");
+}
+
 export async function loadTimelineDay(day: string): Promise<TimelineDay | null> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
-  return readJson<TimelineDay>(path.join("timeline", `${day}.json`));
+  return fetchMember<TimelineDay>(`timeline/${day}.json`);
 }

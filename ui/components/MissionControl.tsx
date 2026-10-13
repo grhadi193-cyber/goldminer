@@ -12,9 +12,10 @@ import { HypothesesView } from "./HypothesesView";
 import { AdminView } from "./AdminView";
 import { Chip } from "./Bits";
 import type { Bundle } from "@/lib/types";
+import type { AuthStatus } from "@/lib/api";
 import { stamp } from "@/lib/format";
 
-export function MissionControl({ bundle }: { bundle: Bundle }) {
+export function MissionControl({ bundle, session }: { bundle: Bundle; session?: AuthStatus | null }) {
   const [view, setView] = useState<ViewKey>("live");
   const { meta } = bundle;
 
@@ -63,7 +64,7 @@ export function MissionControl({ bundle }: { bundle: Bundle }) {
           {view === "backtest" && <BacktestView bundle={bundle} />}
           {view === "coverage" && <CoverageView bundle={bundle} />}
           {view === "hypotheses" && <HypothesesView bundle={bundle} />}
-          {view === "admin" && <AdminView bundle={bundle} />}
+          {view === "admin" && <AdminView bundle={bundle} session={session} />}
         </main>
 
         <footer className="border-t border-line px-5 py-2.5 text-2xs text-dim">

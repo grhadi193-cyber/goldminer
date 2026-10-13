@@ -120,7 +120,7 @@ async def test_identical_request_hits_cache(conn):
     assert len(recorder.calls) == 1
     assert first.from_cache is False and second.from_cache is True
     assert first.cache_key == second.cache_key == canonical_hash(
-        {"model": settings.jev_model, "state": state, "questions": build_questions()}
+        {"model": settings.jev_model_resolved, "state": state, "questions": build_questions()}
     )
 
 

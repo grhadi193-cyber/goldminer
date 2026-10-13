@@ -30,6 +30,7 @@ command groups:
   backtest  run --split discovery|outofsample [--label L]
   paper     monitor | what-if --date YYYY-MM-DD
   report    build --split discovery|outofsample
+  server    run [--host 0.0.0.0] [--port 8787]
   ui        export [--split discovery] [--days 45] [--clean]
   hypothesis test --id N | test-all | list
   server    run
@@ -159,9 +160,11 @@ def _build_parser() -> argparse.ArgumentParser:
     ue.add_argument("--clean", action="store_true", help="wipe ui/public/data first")
 
     # server ---------------------------------------------------------------------------
-    sv = sub.add_parser("server", help="worker webhook")
+    sv = sub.add_parser("server", help="worker HTTP surface (bundle reads, panel API, webhook)")
     sv_sub = sv.add_subparsers(dest="action", required=True)
-    sv_sub.add_parser("run")
+    svr = sv_sub.add_parser("run")
+    svr.add_argument("--host", default=None)
+    svr.add_argument("--port", type=int, default=None)
 
     # demo (synthetic dataset for offline pipeline validation) --------------------------
     dm = sub.add_parser("demo", help="synthetic demo dataset (never research results)")

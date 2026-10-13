@@ -16,7 +16,7 @@ import json
 import shutil
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import psycopg
 
@@ -29,14 +29,22 @@ from ..research.stats.scoring import METHOD_VERSION
 from ..timez import TEHRAN, day_bounds_utc, local_ts
 from ..window import frozen_split
 
-UI_DATA = REPO_ROOT / "ui" / "public" / "data"
+def _bundle_dir() -> Path:
+    """`MISHKAH_BUNDLE_DIR` wins, so a read-only container can point the export at a mounted disk
+    (or /tmp) instead of asking the image to be writable."""
+    import os
+
+    return Path(os.environ.get("MISHKAH_BUNDLE_DIR") or (REPO_ROOT / "ui" / "public" / "data"))
+
+
+UI_DATA = _bundle_dir()  # kept for callers that import it; the writers resolve the path per call
 
 STALE_AFTER_MINUTES = 3.0          # the amber threshold in the spec (§C live tiles)
 MAX_TIMELINE_PER_DAY = 300         # per-day message cap before the payload gets silly
 
 
 def _write(name: str, payload: Any) -> Path:
-    path = UI_DATA / name
+    path = _bundle_dir() / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=1, default=str, ensure_ascii=False), encoding="utf-8")
     return path
@@ -234,7 +242,8 @@ def _price_path(conn: psycopg.Connection, settings: Settings, day: date, as_of: 
     return {"source": None, "symbol": None, "resolution": None, "points": []}
 
 
-def _timeline(conn: psycopg.Connection, settings: Settings, days: list[date]) -> dict[str, Any]:
+def _timeline(conn: psycopg.Connection, settings: Settings, days: list[date],
+              emit: "Callable[[str, Any], None] | None" = None) -> dict[str, Any]:
     """Per-day message markers, read through the anti-leakage bound of the END of that day.
 
     Reading with `as_of = day 22:00 Tehran` is exactly what the replay engine could see when it
@@ -298,11 +307,13 @@ def _timeline(conn: psycopg.Connection, settings: Settings, days: list[date]) ->
                 "truncated": truncated,
             }
         )
-        _write(
-            f"timeline/{day.isoformat()}.json",
-            {"day": day.isoformat(), "items": items, "truncated": truncated,
-             "price_path": _price_path(conn, settings, day, flat_ts)},
-        )
+        payload = {"day": day.isoformat(), "items": items, "truncated": truncated,
+                   "price_path": _price_path(conn, settings, day, flat_ts)}
+        name = f"timeline/{day.isoformat()}.json"
+        if emit is not None:
+            emit(name, payload)
+        else:
+            _write(name, payload)
     return {"days": index}
 
 
@@ -361,9 +372,10 @@ def _run_config(conn: psycopg.Connection, settings: Settings) -> dict[str, Any]:
 def export(args: argparse.Namespace) -> int:
     settings = get_settings()
     split_name = args.split or "discovery"
-    if UI_DATA.exists() and args.clean:
-        shutil.rmtree(UI_DATA)
-    UI_DATA.mkdir(parents=True, exist_ok=True)
+    target = _bundle_dir()
+    if target.exists() and args.clean:
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     with dbconn.sync_conn() as conn:
         split = frozen_split(conn, settings)
@@ -409,9 +421,16 @@ def export(args: argparse.Namespace) -> int:
         }
         written.append(_write("meta.json", meta))
     for path in written:
-        print(f"wrote {path.relative_to(REPO_ROOT)}")
-    print(f"\n{len(written)} files -> {UI_DATA.relative_to(REPO_ROOT)}  (serve with `cd ui && npm run dev`)")
+        print(f"wrote {_display(path)}")
+    print(f"\n{len(written)} files -> {_display(target)}  (the panel reads /api/bundle/*; `cd ui && npm run dev` serves these files locally)")
     return 0
+
+
+def _display(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:  # outside the repo (a mounted disk on a deployed host)
+        return str(path)
 
 
 __all__ = ["export"]

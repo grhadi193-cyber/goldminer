@@ -1,5 +1,10 @@
 """Jev (TypeSafe System One) client — R2.
 
+Providers: `JEV_PROVIDER=typesafe` (official: api.typesafe.ai, `jev-latest`) or
+`JEV_PROVIDER=opencode` (OpenCode Console/Zen: opencode.ai, `jev-1.13-free` while the free window
+lasts, paid id `jev-1.13`). An explicit JEV_BASE_URL/JEV_MODEL/JEV_ALLOWED_HOSTS always wins over
+the preset, so nothing here is a hard-coded provider lock-in.
+
 Rules enforced here, not documented elsewhere:
   * base URL, key, model, timeouts and concurrency come from env ONLY (`JEV_*`)
   * a host allowlist (`JEV_ALLOWED_HOSTS`) gates every send: an unlisted host is a loud
@@ -131,6 +136,15 @@ class HttpTransport:
                     log.warning("jev %s (attempt %d) — backing off", resp.status_code, attempt)
                     await self.backoff.sleep(attempt)
                     continue
+                if resp.status_code in (404, 410) and "free" in str(payload.get("model", "")):
+                    # OpenCode documents jev-1.13-free as a LIMITED-TIME free model. When it goes
+                    # away the honest behaviour is a loud, actionable error — never a silent fall
+                    # back to a paid model and never a blind retry.
+                    raise JevUnavailable(
+                        f"HTTP {resp.status_code}: the free Jev model {payload.get('model')!r} is not "
+                        "answering any more. OpenCode's free window is limited: switch JEV_MODEL to the "
+                        "paid id (jev-1.13) or point JEV_PROVIDER at another provider. Nothing was retried."
+                    )
                 if resp.status_code >= 400:
                     # 4xx validation errors are NEVER blind-retried: surface them.
                     raise JevRequestError(resp.status_code, resp.text)
@@ -292,10 +306,10 @@ class JevClient:
     # ---------------------------------------------------------------- request
 
     def build_payload(self, state: dict[str, Any], questions: dict[str, Any]) -> dict[str, Any]:
-        return {"state": state, "model": self.settings.jev_model, "questions": questions}
+        return {"state": state, "model": self.settings.jev_model_resolved, "questions": questions}
 
     def cache_key(self, state: dict[str, Any], questions: dict[str, Any]) -> str:
-        return canonical_hash({"model": self.settings.jev_model, "state": state, "questions": questions})
+        return canonical_hash({"model": self.settings.jev_model_resolved, "state": state, "questions": questions})
 
     async def ask(
         self,
@@ -359,8 +373,9 @@ class JevClient:
             "transport": type(self.transport).__name__,
             "endpoint": self.endpoint,
             "official_host": self.settings.jev_is_official_host,
-            "model": self.settings.jev_model,
-            "canonical_request_example": canonical_json({"model": self.settings.jev_model})[:0] or "",
+            "model": self.settings.jev_model_resolved,
+            "provider": self.settings.jev_provider_resolved,
+            "canonical_request_example": "",
         }
 
 

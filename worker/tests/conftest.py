@@ -32,6 +32,7 @@ from worker.config import Settings  # noqa: E402
 from worker.db import migrate  # noqa: E402
 
 TABLES = [
+    "login_attempts", "ui_sessions", "app_secrets",
     "audit_log", "run_config", "hypotheses", "paper_equity", "paper_orders", "paper_positions",
     "day_outcomes", "backtest_trades", "backtest_runs", "jev_decisions", "jev_cache",
     "channel_scores", "llm_cache", "price_gaps", "price_bars", "extractions", "messages", "channels",
@@ -88,6 +89,18 @@ class PostgresHarness:
                 self.process.wait(timeout=10)
             except subprocess.TimeoutExpired:  # pragma: no cover
                 self.process.kill()
+
+
+@pytest.fixture(autouse=True)
+def fresh_settings():
+    """`get_settings()` is lru_cached. Tests monkeypatch the environment (and the dev `.env` is a
+    real file on disk), so a cached Settings silently pins the DEVELOPER database into a test.
+    Reset the cache around every test instead of hoping nobody caches first."""
+    from worker.config import reset_settings_cache
+
+    reset_settings_cache()
+    yield
+    reset_settings_cache()
 
 
 @pytest.fixture(scope="session")

@@ -74,7 +74,7 @@ export function TimelineView({ bundle }: { bundle: Bundle }) {
     if (!day) return;
     let alive = true;
     setLoading(true);
-    fetch(`/data/timeline/${day}.json`)
+    fetch(`/api/bundle/timeline/${day}.json`, { cache: "no-store", credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d: TimelineDay | null) => {
         if (alive) {

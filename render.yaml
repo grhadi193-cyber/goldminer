@@ -1,0 +1,59 @@
+# Render blueprint — deploy the whole system as ONE free web service.
+#
+#   Render dashboard → New → Blueprint → pick this repository.
+#
+# The service runs migrations on boot and then serves:
+#   * the Mission Control UI (static export) at `/`
+#   * the panel API (`/api/*`, password-gated) on the same origin
+#   * the signed webhook trigger at `/webhook` (for a free external scheduler)
+#
+# Secrets are NOT in this file. Set them in the dashboard (they are marked `sync: false`), or let
+# the panel's Settings area store them encrypted in the database instead — see docs/deploy_render.md.
+
+services:
+  - type: web
+    name: mishkah
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      # ---------------------------------------------------------------- database
+      # Neon / Supabase pooled connection string (free tiers are fine; the worker is a single
+      # low-traffic process). Add `?sslmode=require` when the provider asks for it.
+      - key: DATABASE_URL
+        sync: false
+      # ---------------------------------------------------------------- panel security
+      # 32+ byte passphrase (or base64) used to encrypt keys stored from the panel. LOSING IT MAKES
+      # STORED KEYS UNRECOVERABLE BY DESIGN — save it in a password manager.
+      - key: MISHKAH_MASTER_KEY
+        generateValue: true
+      # HMAC secret for POST /webhook. Any long random string.
+      - key: WORKER_WEBHOOK_SECRET
+        generateValue: true
+      # Optional: a first-run panel password. Prefer setting it in the panel UI instead — this
+      # value is visible to anyone with dashboard access:
+      #   - key: UI_ADMIN_PASSWORD
+      #     sync: false
+      # ---------------------------------------------------------------- behaviour
+      - key: GM_DEMO_MODE
+        value: "0"          # flip to 1 to serve the synthetic demo dataset instead of real sources
+      - key: PAPER_ONLY
+        value: "true"       # refused if set to false: this build has no order-placing code at all
+      - key: TZ
+        value: UTC          # every timestamp in the system is UTC; Tehran boundaries come from zoneinfo
+      # ---------------------------------------------------------------- integrations
+      # Deliberately absent: add every integration from the panel's Settings area, where values are
+      # stored AES-256-GCM encrypted in the database and never returned to a browser. A blueprinted
+      # `sync: false` variable would force you to paste secrets into the Render dashboard on first
+      # deploy; the panel is the safer route and it is the documented one:
+      #
+      #   JEV_PROVIDER (typesafe | opencode | opencode-paid | opencode-zen), JEV_API_KEY, JEV_MODEL,
+      #   JEV_BASE_URL, JEV_ALLOWED_HOSTS, OPENROUTER_API_KEY, EXTRACTION_MODELS, EXPLAINER_MODEL,
+      #   TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION, TELEGRAM_CHANNELS,
+      #   NOBITEX_BASE, XAUUSD_PROVIDER, TGJU_ENABLED, TSETMC_ENABLED
+      # ---------------------------------------------------------------- UI refresh
+      # How long a bundle read may be cached in-process before it is rebuilt from the database.
+      - key: MISHKAH_BUNDLE_TTL
+        value: "30"
