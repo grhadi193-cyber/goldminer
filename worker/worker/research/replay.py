@@ -91,6 +91,10 @@ class DayReplay:
     outcome: dict[str, Any] | None = None
 
 
+def _mark_info(point) -> dict:
+    return {"source": point.source, "resolution": point.resolution, "ts": str(point.ts), "method": point.method}
+
+
 def simulate_paper_trade(
     *,
     settings: Settings,
@@ -121,17 +125,24 @@ def simulate_paper_trade(
     else:
         binding, binding_reason = cap_threshold, "cap"
 
-    exit_price: float
+    exit_level: float                            # frictionless MID level the position exits at
     exit_reason: str
     realised_exit_ts = exit_ts
     if session_low is not None and session_low <= binding:
-        exit_price = cm.exit_price(binding)
+        exit_level = binding
         exit_reason = binding_reason
     else:
-        exit_price = cm.exit_price(exit_mid)     # forced flat at 22:00 (or the checkpoint exit)
+        exit_level = exit_mid                    # forced flat at 22:00 (or the checkpoint exit)
         exit_reason = "flat_2200"
+    exit_price = cm.exit_price(exit_level)
 
-    gross_bps = (exit_price / entry_price - 1.0) * 1e4
+    # CONVENTION (T8, do not change without updating tests/fixtures/costs_golden.json):
+    #   gross_bps = frictionless MID-to-MID move over the holding window
+    #   cost_bps  = round trip = spread + 2*slippage
+    #   net_bps   = gross_bps - cost_bps
+    # `entry_price`/`exit_price` are ask/bid FILL prices and therefore already contain the
+    # spread; computing gross from them and then subtracting cost_bps would double count it.
+    gross_bps = (exit_level / entry_mid - 1.0) * 1e4
     cost_bps = cm.round_trip_cost_bps
     net_bps = gross_bps - cost_bps
     pnl_toman = size * entry_price * (net_bps / 1e4)
@@ -150,6 +161,9 @@ def simulate_paper_trade(
         detail={
             "entry_mid": entry_mid,
             "exit_mid": exit_mid,
+            "exit_level": exit_level,
+            "gross_basis": "mid_to_mid",
+            "cost_basis": "spread_plus_2x_slippage",
             "stop_price": stop_threshold,
             "cap_price": cap_threshold,
             "binding_threshold": binding,
@@ -277,6 +291,13 @@ class ReplayEngine:
                     session_high=high,
                     day_pnl_bps=day_pnl_bps,
                 )
+                # Provenance of the marks: which series marked entry and exit. When both legs
+                # read the SAME bar (possible when a daily series is the only gold source) the
+                # mid move is exactly 0 by construction and the row is tagged so the report can
+                # say so instead of pretending the trade was measured.
+                trade.detail["entry_mark"] = _mark_info(entry)
+                trade.detail["exit_mark"] = _mark_info(exit_point)
+                trade.detail["same_bar_mark"] = bool(entry.ts == exit_point.ts)
                 self.trades.append(trade)
                 if self.persist:
                     self._store_trade(day=day, decision_id=decision_id, trade=trade)

@@ -1,4 +1,9 @@
-"""T8 — cost maths are golden-tested: reported lifts equal gross − spread − slippage."""
+"""T8 — cost maths are golden-tested.
+
+Pinned convention: `gross_bps` is the frictionless MID-to-MID move, `net_bps = gross_bps -
+round_trip_cost`, and the ask/bid fill prices are reported separately. Signal-level lifts use
+the one-sided cost (`spread + slippage`); a paper round trip uses `spread + 2*slippage`.
+"""
 
 from __future__ import annotations
 
@@ -51,10 +56,12 @@ def test_trade_simulation_matches_golden_fixture(case):
     """The expected values in the fixture are recomputed here from first principles."""
     settings = _settings()
     cm = cost_model(settings, case.get("asset", "gold"))
-    expected_entry = expected_price_for(case, cm, "entry")
-    expected_exit = expected_price_for(case, cm, "exit")
-    expected_gross = (expected_exit / expected_entry - 1.0) * 1e4
-    expected_net = expected_gross - (cm.spread_bps + 2 * cm.slippage_bps)
+    # gross is the MID-to-MID move of the held window; the round trip is charged once in
+    # `cost_bps`. Computing gross from the ask/bid fill prices and subtracting the spread again
+    # would double count it (that bug is why this fixture is explicit about levels vs fills).
+    expected_entry_fill, expected_exit_level, expected_exit_fill = expected_values_for(case, cm)
+    expected_gross = (expected_exit_level / case["entry_mid"] - 1.0) * 1e4
+    expected_net = expected_gross - cm.round_trip_cost_bps
 
     trade = simulate_paper_trade(
         settings=settings,
@@ -68,10 +75,13 @@ def test_trade_simulation_matches_golden_fixture(case):
         day_pnl_bps=case.get("day_pnl_bps", 0.0),
     )
     assert trade.exit_reason == case["expected_exit_reason"]
-    assert trade.entry_price == pytest.approx(expected_entry)
-    assert trade.exit_price == pytest.approx(expected_exit)
+    assert trade.entry_price == pytest.approx(expected_entry_fill)
+    assert trade.exit_price == pytest.approx(expected_exit_fill)
+    assert trade.detail["exit_level"] == pytest.approx(expected_exit_level)
+    assert trade.detail["gross_basis"] == "mid_to_mid"
     assert trade.gross_bps == pytest.approx(expected_gross, rel=1e-9)
     assert trade.cost_bps == pytest.approx(cm.round_trip_cost_bps)
+    assert trade.cost_bps == pytest.approx(cm.spread_bps + 2 * cm.slippage_bps)
     assert trade.net_bps == pytest.approx(expected_net, rel=1e-9)
     assert trade.net_bps == pytest.approx(trade.gross_bps - trade.cost_bps, rel=1e-9)
     assert trade.pnl_toman == pytest.approx(trade.size_g * trade.entry_price * trade.net_bps / 1e4, rel=1e-9)
@@ -79,21 +89,24 @@ def test_trade_simulation_matches_golden_fixture(case):
         assert trade.detail["session_low"] <= trade.detail["stop_price"]
 
 
-def expected_price_for(case: dict, cm: CostModel, which: str) -> float:
-    """Independent recomputation of the documented rule (not a copy of the implementation)."""
-    entry = case["entry_mid"] * (1 + (cm.spread_bps / 2 + cm.slippage_bps) / 1e4)
-    if which == "entry":
-        return entry
+def expected_values_for(case: dict, cm: CostModel) -> tuple[float, float, float]:
+    """Independent recomputation of the documented rule (not a copy of the implementation).
+
+    Returns `(entry_fill, exit_level, exit_fill)` where `exit_level` is a MID level and
+    `exit_fill` is what the trader actually gets.
+    """
     half = (cm.spread_bps / 2 + cm.slippage_bps) / 1e4
-    stop_level = entry * (1 - 100.0 / 1e4)
+    entry_fill = case["entry_mid"] * (1 + half)
+    stop_level = entry_fill * (1 - 100.0 / 1e4)
     cap_room = max(0.0, 200.0 - max(0.0, -case.get("day_pnl_bps", 0.0)))
-    cap_level = entry * (1 - (cap_room + cm.round_trip_cost_bps) / 1e4)
+    cap_level = entry_fill * (1 - (cap_room + cm.round_trip_cost_bps) / 1e4)
+    # On the way down the HIGHER level is touched first and is therefore the binding one.
     binding = stop_level if stop_level >= cap_level else cap_level
     if case["expected_exit_reason"] in ("stop", "cap"):
-        return binding * (1 - half)
+        return entry_fill, binding, binding * (1 - half)
     if case["expected_exit_reason"] == "flat_2200":
         assert case.get("session_low", -1) > binding, "fixture case would actually hit an exit level"
-        return case["exit_mid"] * (1 - half)
+        return entry_fill, case["exit_mid"], case["exit_mid"] * (1 - half)
     raise AssertionError(f"unknown expected exit reason {case['expected_exit_reason']!r}")
 
 

@@ -162,8 +162,8 @@ def _daily_plan(market: DemoMarket, day: date) -> dict[str, list[tuple[int, dict
     # --- hojoom_tracker: LEADS. Direction from the future 45m USD return.
     for _ in range(rng.randint(10, 18)):
         minute = rng.randint(30, 800)
-        fwd = market.usd_forward_return(day, minute, 45)
-        edge = min(0.95, max(0.05, 0.5 + 14.0 * fwd + rng.gauss(0, 0.16)))
+        fwd = market.usd_forward_return(day, minute, 30)
+        edge = min(0.95, max(0.05, 0.5 + 45.0 * fwd + rng.gauss(0, 0.16)))
         direction = "up" if rng.random() < edge else "down"
         plan["hojoom_tracker"].append(
             (minute, {"direction": direction, "kind": "price_quote", "intensity": rng.choice([3, 4, 4, 5])})
@@ -182,7 +182,7 @@ def _daily_plan(market: DemoMarket, day: date) -> dict[str, list[tuple[int, dict
     for _ in range(rng.randint(8, 16)):
         minute = rng.randint(60, 838)
         trail = market.usd_trailing_return(day, minute, 60)
-        edge = min(0.9, max(0.1, 0.5 + 12.0 * trail + rng.gauss(0, 0.12)))
+        edge = min(0.9, max(0.1, 0.5 + 18.0 * trail + rng.gauss(0, 0.12)))
         direction = "up" if rng.random() < edge else "down"
         plan["coin_watch"].append((minute, {"direction": direction, "kind": "opinion", "intensity": rng.choice([2, 3, 4])}))
 

@@ -1,5 +1,5 @@
 {
-  "comment": "Golden cost cases. Expected values are recomputed independently inside tests/test_costs.py from the documented formula (entry at ask, exit at bid, cost = spread + 2*slippage, binding threshold = the higher of the stop and the day-cap level).",
+  "comment": "Golden cost cases. Expected values are recomputed independently inside tests/test_costs.py from the documented formula: entry fill = ask, exit fill = bid, exit LEVEL is the MID level where the position is closed (binding threshold = the higher of the stop level and the day-cap level, both derived from the ask entry), gross_bps = frictionless MID-to-MID move, cost_bps = round trip = spread + 2*slippage, net = gross - cost.",
   "cases": [
     {
       "name": "flat exit, mid unchanged",

@@ -30,7 +30,7 @@ command groups:
   backtest  run --split discovery|outofsample [--label L]
   paper     monitor | what-if --date YYYY-MM-DD
   report    build --split discovery|outofsample
-  hypothesis test --id N | list
+  hypothesis test --id N | test-all | list
   server    run
   demo      seed | reset | status     (synthetic data — never research results)
   selftest
@@ -145,6 +145,8 @@ def _build_parser() -> argparse.ArgumentParser:
     hyt = hy_sub.add_parser("test")
     hyt.add_argument("--id", type=int, required=True)
     hy_sub.add_parser("list")
+    hya = hy_sub.add_parser("test-all")
+    hya.add_argument("--limit", type=int, default=20)
 
     # server ---------------------------------------------------------------------------
     sv = sub.add_parser("server", help="worker webhook")
@@ -208,7 +210,14 @@ def _dispatch(args: argparse.Namespace) -> Callable[[argparse.Namespace], int]:
     if group == "stats":
         from .cli import stats_cmd
 
-        return getattr(stats_cmd, action.replace("-", "_"))
+        return {
+            "event-study": stats_cmd.event_study,
+            "leadlag": stats_cmd.leadlag,
+            "calibration": stats_cmd.calibration,
+            "baselines": stats_cmd.baselines,
+            "costs": stats_cmd.costs,
+            "all": stats_cmd.all_,
+        }[action]
     if group == "backtest":
         from .cli import backtest_cmd
 
@@ -224,7 +233,8 @@ def _dispatch(args: argparse.Namespace) -> Callable[[argparse.Namespace], int]:
     if group == "hypothesis":
         from .cli import hypothesis_cmd
 
-        return getattr(hypothesis_cmd, action)
+        return {"list": hypothesis_cmd.list_hypotheses, "test": hypothesis_cmd.test,
+                "test-all": hypothesis_cmd.test_all}[action]
     if group == "server":
         from .cli import server_cmd
 

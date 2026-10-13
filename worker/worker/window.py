@@ -10,7 +10,7 @@ config edit cannot silently move the out-of-sample boundary.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import psycopg
 
@@ -31,8 +31,15 @@ class Split:
     trading_weekdays: set[int]
 
     def days(self, name: str) -> list[date]:
+        """Trading days of a split.
+
+        Half-open by construction: discovery is [start_date, discovery_end) and the
+        out-of-sample window begins exactly AT discovery_end, so no day is ever in both.
+        """
         if name == "discovery":
-            return list(iter_trading_days(self.start_date, self.discovery_end, self.trading_weekdays))
+            return list(
+                iter_trading_days(self.start_date, self.discovery_end - timedelta(days=1), self.trading_weekdays)
+            )
         if name == "outofsample":
             return list(iter_trading_days(self.discovery_end, self.outofsample_end, self.trading_weekdays))
         raise ValueError(f"unknown split {name!r} (use discovery|outofsample)")
