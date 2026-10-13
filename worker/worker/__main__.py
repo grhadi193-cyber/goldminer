@@ -30,6 +30,7 @@ command groups:
   backtest  run --split discovery|outofsample [--label L]
   paper     monitor | what-if --date YYYY-MM-DD
   report    build --split discovery|outofsample
+  ui        export [--split discovery] [--days 45] [--clean]
   hypothesis test --id N | test-all | list
   server    run
   demo      seed | reset | status     (synthetic data — never research results)
@@ -148,6 +149,15 @@ def _build_parser() -> argparse.ArgumentParser:
     hya = hy_sub.add_parser("test-all")
     hya.add_argument("--limit", type=int, default=20)
 
+    # ui (static bundle for the Mission Control front end) ------------------------------
+    uc = sub.add_parser("ui", help="export the static data bundle the UI reads")
+    uc_sub = uc.add_subparsers(dest="action", required=True)
+    ue = uc_sub.add_parser("export")
+    ue.add_argument("--split", default="discovery")
+    ue.add_argument("--days", type=int, default=45, help="timeline days to export (last N)")
+    ue.add_argument("--max-decisions", type=int, default=60, dest="max_decisions")
+    ue.add_argument("--clean", action="store_true", help="wipe ui/public/data first")
+
     # server ---------------------------------------------------------------------------
     sv = sub.add_parser("server", help="worker webhook")
     sv_sub = sv.add_subparsers(dest="action", required=True)
@@ -226,6 +236,11 @@ def _dispatch(args: argparse.Namespace) -> Callable[[argparse.Namespace], int]:
         from .cli import paper_cmd
 
         return getattr(paper_cmd, action.replace("-", "_"))
+    if group == "ui":
+        from .cli import ui_cmd
+
+        return ui_cmd.export
+
     if group == "report":
         from .cli import report_cmd
 

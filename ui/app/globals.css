@@ -1,0 +1,108 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Vazirmatn:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #0b0e14;
+  color: #e6edf7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Latin digits everywhere, including inside Persian text (spec §C). */
+body {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.fa-text {
+  direction: rtl;
+  text-align: right;
+  font-family: Vazirmatn, Tahoma, sans-serif;
+  unicode-bidi: isolate;
+}
+
+.ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.panel {
+  background: #111621;
+  border: 1px solid #1e2635;
+  border-radius: 10px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  border: 1px solid #1e2635;
+  padding: 1px 8px;
+  font-size: 10px;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #8fa0b8;
+  white-space: nowrap;
+}
+
+.chip-ok {
+  border-color: rgba(52, 211, 153, 0.4);
+  color: #34d399;
+}
+.chip-warn {
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #f59e0b;
+}
+.chip-bad {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #f87171;
+}
+.chip-info {
+  border-color: rgba(34, 211, 238, 0.4);
+  color: #22d3ee;
+}
+
+.rail-btn {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #8fa0b8;
+  border: 1px solid transparent;
+}
+.rail-btn:hover {
+  color: #e6edf7;
+  background: #111621;
+}
+.rail-btn[data-active="true"] {
+  color: #22d3ee;
+  background: #0e131c;
+  border-color: #1e2635;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Scrollbars that do not scream */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e2635;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

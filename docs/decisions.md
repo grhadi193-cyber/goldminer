@@ -143,3 +143,33 @@ helpers in `worker/timez.py`; nothing else computes offsets.
 clock for part of the year.
 **Consequences.** `ZoneInfo.utcoffset(None)` is a trap (returns `None`) — use
 `datetime.now(tz=TEHRAN).utcoffset()`.
+
+## D13 · runtime placement: worker on an always-on host, UI served with no database driver
+**Decision (operator asked me to choose).** Heavy work stays in the Python worker, and the worker
+runs on a machine that is awake during the session (the operator's own machine is fine to start;
+an always-on box is required before the live monitor is trusted, because a sleeping laptop turns
+the minute logger into a swiss-cheese series and the UI will honestly paint those tiles amber).
+Postgres lives next to the worker. The Next.js UI is deployable to Vercel as a **static/bundle
+reader**: it has no database driver, no cron and no long-running function. It renders only the
+bundle that `python -m worker ui export` writes, and its only write path is the token-gated
+`/api/admin` route, which forwards to the worker (`WORKER_ADMIN_URL`) or answers 501 — never a
+direct SQL write.
+**Why.** Three constraints collide: the free-tier rule ("UI + short read-only API routes only, no
+Vercel cron"), the fact that Vercel cannot reach a laptop-local Postgres, and rule R7's requirement
+that the UI's live tiles be *fresh* during 08:00–22:00 Tehran. Making the UI a pure consumer of a
+worker-written bundle satisfies all three and keeps one writer for the audit log.
+**Consequences.** Nothing in the UI can silently disagree with a report — it is the same JSON the
+report is built from. `live.json` staleness is therefore meaningful: amber means the worker has not
+been running, which is exactly the signal the operator needs. If the worker later runs on a
+different host than Postgres, the export step is the only thing that has to move with it.
+
+## D14 · narrative stays off until a key exists
+**Decision.** The explainer (the only strong-LLM call, D7) stays disabled in this deployment: no
+`EXPLAINER_MODEL` / `OPENROUTER_API_KEY` is configured, so `report build` writes every numeric
+section and prints "narrative skipped by design" in section 7. The UI has a hypotheses view that
+will populate the moment the step is enabled.
+**Why.** The operator chose "numbers only for now" (2026-10-13). The numeric pipeline must never
+depend on an API key being present.
+**Consequences.** No hypotheses are proposed automatically yet; `hypotheses` stays empty until the
+operator either enables the explainer or inserts rows by hand (the coded tests in
+`research/hypothesis.py` are what turn a proposal into a verdict, either way).

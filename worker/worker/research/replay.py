@@ -267,6 +267,7 @@ class ReplayEngine:
             decision_id = self._store_decision(
                 day=day, checkpoint=checkpoint, decision_ts=decision_ts, state=state, state_hash=state_hash,
                 answers=answers, model=response.model, cache_key=response.cache_key,
+                verdict=verdict.as_dict(), confidence=confidence, day_pnl_bps=day_pnl_bps,
             )
 
         trade: TradeResult | None = None
@@ -347,23 +348,30 @@ class ReplayEngine:
         answers: dict[str, Any],
         model: str,
         cache_key: str,
+        verdict: dict[str, Any] | None = None,
+        confidence: float | None = None,
+        day_pnl_bps: float | None = None,
     ) -> int:
         row = self.conn.execute(
             """
             insert into jev_decisions
                 (decision_ts, day_date, checkpoint, state_json, questions_json, answers_json,
-                 model, cache_key, split, state_hash, computed_at)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                 model, cache_key, split, state_hash, verdict_json, confidence, day_pnl_bps, computed_at)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
             on conflict (day_date, checkpoint, split, state_hash) do update
                 set answers_json = excluded.answers_json,
                     model = excluded.model,
                     cache_key = excluded.cache_key,
+                    verdict_json = excluded.verdict_json,
+                    confidence = excluded.confidence,
+                    day_pnl_bps = excluded.day_pnl_bps,
                     computed_at = now()
             returning decision_id
             """,
             (
                 decision_ts, day, checkpoint_key(checkpoint), jsonb(state), jsonb(self.questions),
                 jsonb(answers), model, cache_key, self.split_name, state_hash,
+                jsonb(verdict) if verdict is not None else None, confidence, day_pnl_bps,
             ),
         ).fetchone()
         self.conn.commit()
