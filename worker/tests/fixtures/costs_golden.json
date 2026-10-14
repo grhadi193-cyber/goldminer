@@ -1,0 +1,55 @@
+{
+  "comment": "Golden cost cases. Expected values are recomputed independently inside tests/test_costs.py from the documented formula: entry fill = ask, exit fill = bid, exit LEVEL is the MID level where the position is closed (binding threshold = the higher of the stop level and the day-cap level, both derived from the ask entry), gross_bps = frictionless MID-to-MID move, cost_bps = round trip = spread + 2*slippage, net = gross - cost.",
+  "cases": [
+    {
+      "name": "flat exit, mid unchanged",
+      "asset": "gold",
+      "entry_mid": 1000000.0,
+      "exit_mid": 1000000.0,
+      "session_low": 999000.0,
+      "session_high": 1001000.0,
+      "day_pnl_bps": 0.0,
+      "expected_exit_reason": "flat_2200"
+    },
+    {
+      "name": "small up move that does not clear costs",
+      "asset": "gold",
+      "entry_mid": 1000000.0,
+      "exit_mid": 1004000.0,
+      "session_low": 999000.0,
+      "session_high": 1005000.0,
+      "day_pnl_bps": 0.0,
+      "expected_exit_reason": "flat_2200"
+    },
+    {
+      "name": "stop loss hit intraday",
+      "asset": "gold",
+      "entry_mid": 9200000.0,
+      "exit_mid": 9100000.0,
+      "session_low": 8900000.0,
+      "session_high": 9250000.0,
+      "day_pnl_bps": 0.0,
+      "expected_exit_reason": "stop"
+    },
+    {
+      "name": "day-cap binds before the stop (day already down 190 bps of a 200 bps cap)",
+      "asset": "gold",
+      "entry_mid": 9200000.0,
+      "exit_mid": 9180000.0,
+      "session_low": 9150000.0,
+      "session_high": 9210000.0,
+      "day_pnl_bps": -190.0,
+      "expected_exit_reason": "cap"
+    },
+    {
+      "name": "coin round trip with coin costs",
+      "asset": "coin",
+      "entry_mid": 152000000.0,
+      "exit_mid": 155000000.0,
+      "session_low": 151500000.0,
+      "session_high": 155500000.0,
+      "day_pnl_bps": 0.0,
+      "expected_exit_reason": "flat_2200"
+    }
+  ]
+}
